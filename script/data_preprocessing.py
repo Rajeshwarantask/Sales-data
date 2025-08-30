@@ -4,6 +4,7 @@ from pyspark.ml.feature import Imputer
 from pyspark.sql.types import DoubleType, IntegerType, StringType, DateType
 from prophet import Prophet
 import pandas as pd
+from pyspark.sql.functions import col, to_date
 
 # Initialize Spark session
 spark = SparkSession.builder \
@@ -127,19 +128,25 @@ def compute_product_metrics(cleaned_transaction_df):
 
 # Clean all datasets
 def clean_data(customer_df, transaction_df, product_df):
-    cleaned_customer_df = impute_missing_values(customer_df)
-    cleaned_transaction_df = impute_missing_values(transaction_df)
-    cleaned_product_df = impute_missing_values(product_df)
+    print("DEBUG: Initial Columns in transaction_df:", transaction_df.columns)
 
-    enriched_customer_df = compute_customer_metrics(cleaned_transaction_df, cleaned_customer_df)
-    cleaned_transaction_df = compute_average_basket_size(cleaned_transaction_df)
-    cleaned_transaction_df = compute_seasonal_trends(cleaned_transaction_df)
+    # Ensure consistent schema for transaction_df
+    numeric_cols = [
+        "quantity", "unit_price", "discount_applied", "total_sales",
+        "avg_purchase_value", "total_returned_value", "total_discounts_received",
+        "total_items_purchased", "max_single_purchase_value", "min_single_purchase_value"
+    ]
 
-    monthly_sales_trends = compute_monthly_sales_trends(cleaned_transaction_df)
+    for c in numeric_cols:
+        transaction_df = transaction_df.withColumn(c, col(c).cast("double"))
 
-    return enriched_customer_df, cleaned_transaction_df, cleaned_product_df, monthly_sales_trends
+    # Ensure transaction_date is properly cast to date
+    transaction_df = transaction_df.withColumn(
+        "transaction_date", to_date(col("transaction_date"), "MM-dd-yyyy")
+    )
 
+    print("DEBUG: Columns after preprocessing:", transaction_df.columns)
 
-# Example usage:
-# customer_df, transaction_df, product_df = load_data()  # Load your DataFrames here
-# enriched_customer_df, cleaned_transaction_df, cleaned_product_df, monthly_sales_trends = clean_data(customer_df, transaction_df, product_df)
+    # Return cleaned DataFrames
+    return customer_df, transaction_df, product_df
+

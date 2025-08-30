@@ -4,7 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold
+from sklearn.model_selection import train_test_split, GridSearchCV, StratifiedKFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     accuracy_score, precision_recall_fscore_support, confusion_matrix, roc_auc_score,
@@ -156,17 +156,24 @@ pd.DataFrame(classification_results).T.to_csv("results/churn_model_comparison.cs
 pd.DataFrame(regression_results).T.to_csv("results/sales_model_comparison.csv")
 
 # -------------------- Grid Search Optimization --------------------
-param_grid = {
-    'n_estimators': [100, 200],
-    'max_depth': [10, 20],
-    'min_samples_split': [2, 5],
-    'min_samples_leaf': [1, 2]
+param_grid_rf = {
+    'n_estimators': [50, 100, 200],
+    'max_depth': [5, 10, 20],
+    'min_samples_split': [2, 5, 10]
 }
-grid_search = GridSearchCV(
-    RandomForestClassifier(class_weight='balanced'),
-    param_grid, cv=StratifiedKFold(n_splits=5, shuffle=True, random_state=42),
-    scoring='f1', n_jobs=-1, verbose=1
-)
-grid_search.fit(X_train_c, y_train_c)
-print(f"\nBest Random Forest F1 Score: {grid_search.best_score_:.4f}")
-print(f"Best Parameters: {grid_search.best_params_}")
+grid_search_rf = GridSearchCV(RandomForestRegressor(), param_grid_rf, cv=3, scoring='neg_mean_squared_error')
+grid_search_rf.fit(X_train_r, y_train_r)
+print("Best Parameters for Random Forest:", grid_search_rf.best_params_)
+
+param_grid_xgb = {
+    'n_estimators': [50, 100, 200],
+    'learning_rate': [0.01, 0.1, 0.2],
+    'max_depth': [3, 5, 7]
+}
+grid_search_xgb = GridSearchCV(XGBRegressor(), param_grid_xgb, cv=3, scoring='neg_mean_squared_error')
+grid_search_xgb.fit(X_train_r, y_train_r)
+print("Best Parameters for XGBoost:", grid_search_xgb.best_params_)
+
+scores = cross_val_score(RandomForestRegressor(), X_train_r, y_train_r, cv=5, scoring='neg_mean_squared_error')
+print("Cross-Validation Scores:", scores)
+print("Mean CV Score:", scores.mean())

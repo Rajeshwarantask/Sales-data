@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 from sklearn.impute import KNNImputer
 from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
+import matplotlib.pyplot as plt
 
 def robust_date_conversion(df, date_col='transaction_date'):
     """Convert transaction_date to datetime and extract date-based features."""
@@ -10,6 +12,10 @@ def robust_date_conversion(df, date_col='transaction_date'):
     df['day_of_week'] = df[date_col].dt.dayofweek
     df['month'] = df[date_col].dt.month
     df['quarter'] = df[date_col].dt.quarter
+    df['year'] = df[date_col].dt.year
+    df['day'] = df[date_col].dt.day
+    df['weekday'] = df[date_col].dt.weekday
+    df['is_weekend'] = df['weekday'].apply(lambda x: 1 if x >= 5 else 0)
     return df
 
 def add_monthly_sales_trends(df):
@@ -73,6 +79,19 @@ def scale_numeric_features(df, exclude_cols=None):
     df[numeric_cols] = scaler.fit_transform(df[numeric_cols])
     return df
 
+def add_lagged_features(df, lags=[1, 2, 3]):
+    """Add lagged features for time series analysis."""
+    for lag in lags:
+        df[f'lag_{lag}'] = df['total_sales'].shift(lag)
+    return df
+
+def add_rolling_statistics(df, windows=[3]):
+    """Add rolling statistics features."""
+    for window in windows:
+        df[f'rolling_mean_{window}'] = df['total_sales'].rolling(window=window).mean()
+        df[f'rolling_std_{window}'] = df['total_sales'].rolling(window=window).std()
+    return df
+
 def feature_engineering_pipeline(df):
     """Apply the full pipeline of feature engineering transformations."""
     df = robust_date_conversion(df)
@@ -83,11 +102,16 @@ def feature_engineering_pipeline(df):
     df = add_seasonal_trends(df)
     df = handle_missing_values(df)
     df = scale_numeric_features(df, exclude_cols=['customer_id', 'product_id'])
+    df = add_lagged_features(df)
+    df = add_rolling_statistics(df)
     return df
 
 if __name__ == "__main__":
     # Load data
     df = pd.read_csv('data/retail_data.csv')
+    
+    # Resample sales data to weekly frequency
+    df = df.groupby(pd.Grouper(key="transaction_date", freq="W")).sum().reset_index()
     
     # Apply feature engineering
     df = feature_engineering_pipeline(df)
@@ -95,3 +119,18 @@ if __name__ == "__main__":
     # Save processed dataset
     df.to_csv('data/retail_data_with_features.csv', index=False)
     print("✅ Feature engineering completed and saved.")
+
+    # Feature importance analysis
+    X_train = df.drop(['sales_amount', 'transaction_date'], axis=1)
+    y_train = df['sales_amount']
+    
+    rf = RandomForestRegressor()
+    rf.fit(X_train, y_train)
+    feature_importance = rf.feature_importances_
+
+    # Plot feature importance
+    plt.barh(X_train.columns, feature_importance)
+    plt.xlabel("Feature Importance")
+    plt.ylabel("Features")
+    plt.title("Random Forest Feature Importance")
+    plt.show()

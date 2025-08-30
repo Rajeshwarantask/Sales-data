@@ -13,6 +13,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA
 from sklearn.metrics import accuracy_score, mean_absolute_error, mean_squared_error, r2_score
+from lightgbm import LGBMRegressor
 
 os.makedirs("results", exist_ok=True)
 
@@ -62,6 +63,10 @@ X_train, X_test, y_train_churn, y_test_churn, y_train_sales, y_test_sales = trai
     X_preprocessed, y_churn, y_sales, test_size=0.2, random_state=42
 )
 
+# Define X_train and y_train
+X_train = X_train  # Features are already defined
+y_train = y_train_churn  # Target variable for churn prediction
+
 # Model tuning
 def tune_model(model, param_grid, X_train, y_train, search_type='grid'):
     search = GridSearchCV(model, param_grid, cv=5, n_jobs=-1, verbose=1) if search_type == 'grid' else \
@@ -105,6 +110,11 @@ gbr_reg = tune_model(GradientBoostingRegressor(), {
     'max_depth': [3, 5]
 }, X_train, y_train_sales, 'grid')
 
+# Additional LightGBM Regressor
+lgbm = LGBMRegressor()
+lgbm.fit(X_train, y_train_sales)
+y_pred_lgbm = lgbm.predict(X_test)
+
 # Evaluation function
 def evaluate_model(model, X_test, y_test, task='classification'):
     y_pred = model.predict(X_test)
@@ -129,11 +139,47 @@ results_churn = pd.DataFrame([
 results_sales = pd.DataFrame([
     evaluate_model(rf_reg, X_test, y_test_sales, 'regression'),
     evaluate_model(xgb_reg, X_test, y_test_sales, 'regression'),
-    evaluate_model(gbr_reg, X_test, y_test_sales, 'regression')
-], index=['Random Forest', 'XGBoost', 'GradientBoosting'])
+    evaluate_model(gbr_reg, X_test, y_test_sales, 'regression'),
+    evaluate_model(lgbm, X_test, y_test_sales, 'regression')
+], index=['Random Forest', 'XGBoost', 'GradientBoosting', 'LightGBM'])
 
 # Save results
 results_churn.to_csv('results/tuned_churn_model_results.csv')
 results_sales.to_csv('results/tuned_sales_model_results.csv')
 
 print("All models tuned and evaluated successfully!")
+
+# Additional Grid Search for Random Forest and XGBoost Regressors
+# Random Forest
+param_grid_rf = {
+    'n_estimators': [50, 100, 200],
+    'max_depth': [5, 10, 20],
+    'min_samples_split': [2, 5, 10]
+}
+grid_search_rf = GridSearchCV(RandomForestRegressor(), param_grid_rf, cv=3, scoring='neg_mean_squared_error')
+grid_search_rf.fit(X_train, y_train)
+print("Best Parameters for Random Forest:", grid_search_rf.best_params_)
+
+# XGBoost
+from xgboost import XGBRegressor
+param_grid_xgb = {
+    'n_estimators': [50, 100, 200],
+    'learning_rate': [0.01, 0.1, 0.2],
+    'max_depth': [3, 5, 7]
+}
+grid_search_xgb = GridSearchCV(XGBRegressor(), param_grid_xgb, cv=3, scoring='neg_mean_squared_error')
+grid_search_xgb.fit(X_train, y_train)
+print("Best Parameters for XGBoost:", grid_search_xgb.best_params_)
+
+# Define y_train
+y_train = df["target_column"]  # Replace "target_column" with the actual column name
+
+# Example for Random Forest
+param_grid = {
+    'n_estimators': [50, 100, 200],
+    'max_depth': [5, 10, 20]
+}
+grid_search = GridSearchCV(RandomForestRegressor(), param_grid, cv=3, scoring='neg_mean_squared_error')
+grid_search.fit(X_train, y_train)
+
+print("Best Parameters:", grid_search.best_params_)

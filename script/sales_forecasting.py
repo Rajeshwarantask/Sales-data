@@ -1,28 +1,35 @@
 import os
-import pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from prophet import Prophet
+import pandas as pd
+import numpy as np
+import pickle
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import GridSearchCV, train_test_split
 import joblib
+from pyspark.sql import functions as F
+from sklearn.preprocessing import StandardScaler
 
 # Ensure the results directory exists
 if not os.path.exists("results"):
     os.makedirs("results")
 
-# Evaluate regression model
-def evaluate_regression_model(y_true, y_pred):
+def evaluate_model(y_true, y_pred, model_name):
+    """Evaluate a model and return performance metrics."""
+    mae = mean_absolute_error(y_true, y_pred)
     mse = mean_squared_error(y_true, y_pred)
-    rmse = mse ** 0.5
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_true, y_pred)
     return {
-        "MAE": mean_absolute_error(y_true, y_pred),
+        "Model": model_name,
+        "MAE": mae,
         "MSE": mse,
         "RMSE": rmse,
-        "R2 Score": r2_score(y_true, y_pred)
+        "R2 Score": r2
     }
 
 # Hyperparameter tuning
@@ -49,140 +56,120 @@ def hyperparameter_tuning(model, X_train, y_train):
 
 # Run forecasting process
 def run_forecasting(cleaned_transaction_df):
-    print("Preparing sales forecasting...")
+    print("\n📦 Starting Sales Forecasting...\n")
 
-    trans_df = cleaned_transaction_df.toPandas()
-    trans_df['transaction_date'] = pd.to_datetime(trans_df['transaction_date'])
-    trans_df['sales'] = trans_df['quantity'] * trans_df['unit_price']
-    daily_sales = trans_df.groupby('transaction_date')['sales'].sum().reset_index()
-    daily_sales.columns = ['ds', 'y']
+    # Ensure consistent schema
+    cleaned_transaction_df = cleaned_transaction_df.withColumn("transaction_date", F.to_date("transaction_date", "yyyy-MM-dd"))
+    cleaned_transaction_df = cleaned_transaction_df.withColumn("total_sales", cleaned_transaction_df["total_sales"].cast("double"))
 
-    # Prophet Forecasting
-    prophet_model = Prophet()
-    prophet_model.fit(daily_sales)
+    # Aggregate daily sales
+    sales_daily = cleaned_transaction_df.groupBy("transaction_date").agg(F.sum("total_sales").alias("y"))
+    sales_daily = sales_daily.withColumnRenamed("transaction_date", "ds")
 
-    future = prophet_model.make_future_dataframe(periods=30)
-    forecast = prophet_model.predict(future)
+    # Convert to Pandas
+    sales_daily_pd = sales_daily.toPandas()
+    sales_daily_pd["ds"] = pd.to_datetime(sales_daily_pd["ds"])
 
-    # Prophet Plot
-    fig1 = prophet_model.plot(forecast)
-    plt.title("Sales Forecast (Prophet)")
-    plt.tight_layout()
-    fig1.savefig("results/sales_forecast_prophet.png")
-    plt.close()
+    # Add time-based features
+    sales_daily_pd["dayofweek"] = sales_daily_pd["ds"].dt.dayofweek
+    sales_daily_pd["month"] = sales_daily_pd["ds"].dt.month
+    sales_daily_pd["year"] = sales_daily_pd["ds"].dt.year
+    sales_daily_pd["is_weekend"] = (sales_daily_pd["ds"].dt.dayofweek >= 5).astype(int)
 
-    # Prophet Seasonality Plot
-    fig2 = prophet_model.plot_components(forecast)
-    plt.tight_layout()
-    fig2.savefig("results/sales_forecast_seasonality.png")
-    plt.close()
+    # Add lag features
+    sales_daily_pd["lag_1"] = sales_daily_pd["y"].shift(1)
+    sales_daily_pd["lag_7"] = sales_daily_pd["y"].shift(7)
 
-    # Add time index
-    df_ml = daily_sales.copy()
-    df_ml['day'] = range(len(df_ml))
-    X = df_ml[['day']]
-    y = df_ml['y']
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
+    # Add rolling window statistics
+    sales_daily_pd["rolling_mean_7"] = sales_daily_pd["y"].shift(1).rolling(7).mean()
+    sales_daily_pd["rolling_std_7"] = sales_daily_pd["y"].shift(1).rolling(7).std()
 
-    models = {
-        "Linear Regression": LinearRegression(),
-        "Random Forest": RandomForestRegressor(),
-        "XGBoost": XGBRegressor()
+    # Drop rows with NaN values (caused by lag/rolling features)
+    sales_daily_pd = sales_daily_pd.dropna()
+
+    # Split into train and test sets
+    from sklearn.model_selection import train_test_split
+    X = sales_daily_pd.drop(columns=["y", "ds"])
+    y = sales_daily_pd["y"]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+    # Train models
+    print("Training Linear Regression...")
+    from sklearn.linear_model import LinearRegression
+    lr = LinearRegression()
+    lr.fit(X_train, y_train)
+    y_pred_lr = lr.predict(X_test)
+
+    print("Training Random Forest...")
+    from sklearn.ensemble import RandomForestRegressor
+    rf = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42)
+    rf.fit(X_train, y_train)
+    y_pred_rf = rf.predict(X_test)
+
+    print("Training XGBoost...")
+    from xgboost import XGBRegressor
+    xgb = XGBRegressor(n_estimators=100, learning_rate=0.01, max_depth=3, random_state=42)
+    xgb.fit(X_train, y_train)
+    y_pred_xgb = xgb.predict(X_test)
+
+    # Evaluate models
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    metrics = {
+        "Linear Regression": {
+            "MAE": mean_absolute_error(y_test, y_pred_lr),
+            "MSE": mean_squared_error(y_test, y_pred_lr),
+            "RMSE": mean_squared_error(y_test, y_pred_lr, squared=False),
+            "R2": r2_score(y_test, y_pred_lr),
+        },
+        "Random Forest": {
+            "MAE": mean_absolute_error(y_test, y_pred_rf),
+            "MSE": mean_squared_error(y_test, y_pred_rf),
+            "RMSE": mean_squared_error(y_test, y_pred_rf, squared=False),
+            "R2": r2_score(y_test, y_pred_rf),
+        },
+        "XGBoost": {
+            "MAE": mean_absolute_error(y_test, y_pred_xgb),
+            "MSE": mean_squared_error(y_test, y_pred_xgb),
+            "RMSE": mean_squared_error(y_test, y_pred_xgb, squared=False),
+            "R2": r2_score(y_test, y_pred_xgb),
+        },
     }
 
-    results = []
+    print("\nModel Comparison (Sales Forecasting):")
+    for model, scores in metrics.items():
+        print(f"{model}: {scores}")
 
-    for name, model in models.items():
-        print(f"Training {name}...")
-        model = hyperparameter_tuning(model, X_train, y_train)
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-        metrics = evaluate_regression_model(y_test, y_pred)
-        metrics["Model"] = name
-        results.append(metrics)
+    # Save the best model
+    best_model = max(metrics, key=lambda x: metrics[x]["R2"])
+    print(f"\n🏆 Best Model: {best_model}")
 
-        # Actual vs Predicted Plot
-        plt.figure(figsize=(8, 5))
-        plt.plot(y_test.values, label='Actual')
-        plt.plot(y_pred, label='Predicted')
-        plt.title(f"{name} - Sales Forecast")
-        plt.xlabel("Days")
-        plt.ylabel("Sales")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(f"results/sales_forecast_{name.lower().replace(' ', '_')}.png")
-        plt.close()
+def run_sales_forecasting(X_train, X_test, y_train, y_test):
+    print("Missing values in X_train:", X_train.isnull().sum())
+    print("Missing values in y_train:", y_train.isnull().sum())
 
-    results_df = pd.DataFrame(results).set_index("Model")
-    print("\nModel Comparison (Sales Forecasting):\n", results_df)
-    results_df.to_csv("results/sales_forecast_comparison.csv")
+    # Fill missing values with column means
+    X_train = X_train.fillna(X_train.mean())
+    X_test = X_test.fillna(X_test.mean())
 
-    # Column chart for comparison
-    results_df[['MAE', 'RMSE']].plot(kind='bar', figsize=(10, 6), title='Model Error Comparison')
-    plt.ylabel("Error")
-    plt.tight_layout()
-    plt.savefig("results/model_error_comparison.png")
-    plt.close()
+    # Train Linear Regression
+    lr = LinearRegression()
+    lr.fit(X_train, y_train)
+    y_pred_lr = lr.predict(X_test)
 
-    best_model_name = results_df["R2 Score"].idxmax()
-    best_model = [model for name, model in models.items() if name == best_model_name][0]
-    joblib.dump(best_model, "results/best_sales_forecast_model.pkl")
+    # Train Random Forest
+    rf = RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42)
+    rf.fit(X_train, y_train)
+    y_pred_rf = rf.predict(X_test)
 
-    # Weekly/Monthly/Yearly trend analysis
-    sales_trend_df = trans_df.copy()
-    sales_trend_df['week'] = sales_trend_df['transaction_date'].dt.to_period('W').apply(lambda r: r.start_time)
-    sales_trend_df['month'] = sales_trend_df['transaction_date'].dt.to_period('M').apply(lambda r: r.start_time)
-    sales_trend_df['year'] = sales_trend_df['transaction_date'].dt.year
+    # Train XGBoost
+    xgb = XGBRegressor(n_estimators=100, learning_rate=0.01, max_depth=3, random_state=42)
+    xgb.fit(X_train, y_train)
+    y_pred_xgb = xgb.predict(X_test)
 
-    weekly_sales = sales_trend_df.groupby('week')['sales'].sum().reset_index()
-    monthly_sales = sales_trend_df.groupby('month')['sales'].sum().reset_index()
-    yearly_sales = sales_trend_df.groupby('year')['sales'].sum().reset_index()
-
-    weekly_sales.to_csv("results/weekly_sales_trend.csv", index=False)
-    monthly_sales.to_csv("results/monthly_sales_trend.csv", index=False)
-    yearly_sales.to_csv("results/yearly_sales_trend.csv", index=False)
-
-    # Plot trends
-    plt.figure(figsize=(10, 5))
-    sns.lineplot(data=weekly_sales, x='week', y='sales')
-    plt.title("Weekly Sales Trend")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.savefig("results/weekly_sales_trend.png")
-    plt.close()
-
-    plt.figure(figsize=(10, 5))
-    sns.lineplot(data=monthly_sales, x='month', y='sales')
-    plt.title("Monthly Sales Trend")
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    plt.savefig("results/monthly_sales_trend.png")
-    plt.close()
-
-    plt.figure(figsize=(6, 4))
-    sns.barplot(data=yearly_sales, x='year', y='sales')
-    plt.title("Yearly Sales Trend")
-    plt.tight_layout()
-    plt.savefig("results/yearly_sales_trend.png")
-    plt.close()
-
-    # Heatmap: Monthly sales across years
-    heatmap_data = sales_trend_df.copy()
-    heatmap_data['month'] = heatmap_data['transaction_date'].dt.month
-    heatmap_data['year'] = heatmap_data['transaction_date'].dt.year
-    pivot_table = heatmap_data.pivot_table(values='sales', index='month', columns='year', aggfunc='sum')
-
-    plt.figure(figsize=(10, 6))
-    sns.heatmap(pivot_table, annot=True, fmt=".0f", cmap="YlGnBu")
-    plt.title("Monthly Sales Heatmap by Year")
-    plt.tight_layout()
-    plt.savefig("results/monthly_sales_heatmap.png")
-    plt.close()
-
-    # Top months and weeks
-    top_months = monthly_sales.sort_values(by='sales', ascending=False).head(3)
-    top_weeks = weekly_sales.sort_values(by='sales', ascending=False).head(3)
-    print("\nTop 3 Sales Months:\n", top_months)
-    print("\nTop 3 Sales Weeks:\n", top_weeks)
-
-    print("Sales forecasting and analysis completed.\n")
+    # Evaluate models and return trained models and predictions
+    metrics_df = pd.DataFrame([
+        evaluate_model(y_test, y_pred_lr, "Linear Regression"),
+        evaluate_model(y_test, y_pred_rf, "Random Forest"),
+        evaluate_model(y_test, y_pred_xgb, "XGBoost")
+    ])
+    return rf, lr, xgb, y_pred_lr, metrics_df

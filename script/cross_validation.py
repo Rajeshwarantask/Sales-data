@@ -1,11 +1,10 @@
 import pandas as pd
 from pyspark.ml.classification import LogisticRegression, RandomForestClassifier, GBTClassifier
-from pyspark.ml.evaluation import BinaryClassificationEvaluator, MulticlassClassificationEvaluator
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
 from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
 from pyspark.sql import SparkSession
 from pyspark.ml.feature import VectorAssembler, StandardScaler
-from imblearn.over_sampling import SMOTE
-from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.sql.functions import monotonically_increasing_id, col
 
 # Initialize Spark session
 spark = SparkSession.builder.appName("ImprovedCrossValidation").getOrCreate()
@@ -21,18 +20,8 @@ data = assembler.transform(transaction_df)
 scaler = StandardScaler(inputCol="features", outputCol="scaled_features")
 data = scaler.fit(data).transform(data)
 
-# Handle class imbalance using SMOTE
-def smote_oversample(data, label_col, feature_col):
-    # Convert Spark DataFrame to Pandas for SMOTE processing
-    pandas_df = data.select(label_col, feature_col).toPandas()
-    smote = SMOTE(sampling_strategy='auto')
-    X_resampled, y_resampled = smote.fit_resample(pandas_df[feature_col], pandas_df[label_col])
-    
-    # Convert back to Spark DataFrame
-    return spark.createDataFrame(pd.DataFrame(X_resampled, columns=feature_col), schema=data.schema)
-
-# Oversample data
-data = smote_oversample(data, label_col="high_demand_product", feature_col=["scaled_features"])
+# Add a row index column for splitting
+data = data.withColumn("row_index", monotonically_increasing_id())
 
 # Define walk-forward validation function
 def walk_forward_validation(data, model, param_grid, evaluator, num_folds=10):
@@ -44,8 +33,12 @@ def walk_forward_validation(data, model, param_grid, evaluator, num_folds=10):
     
     # Loop through the walk-forward validation steps
     for fold in range(num_folds):
-        train_data = data.limit(fold * fold_size)
-        test_data = data.limit((fold + 1) * fold_size).subtract(train_data)
+        # Define train and test data for the current fold
+        start_index = fold * fold_size
+        end_index = start_index + fold_size
+        
+        train_data = data.filter((col("row_index") < start_index) | (col("row_index") >= end_index))
+        test_data = data.filter((col("row_index") >= start_index) & (col("row_index") < end_index))
         
         # Build the cross-validator
         cross_val = CrossValidator(estimator=model,
@@ -74,12 +67,12 @@ lr = LogisticRegression(featuresCol="scaled_features", labelCol="high_demand_pro
 rf = RandomForestClassifier(featuresCol="scaled_features", labelCol="high_demand_product")
 gbt = GBTClassifier(featuresCol="scaled_features", labelCol="high_demand_product")
 
-# Define param grids for each model with expanded ranges
+# Define param grids for each model
 lr_param_grid = ParamGridBuilder().addGrid(lr.regParam, [0.01, 0.1, 0.5]).addGrid(lr.maxIter, [10, 20, 50]).build()
 rf_param_grid = ParamGridBuilder().addGrid(rf.numTrees, [50, 100, 200]).addGrid(rf.maxDepth, [5, 10, 15]).build()
 gbt_param_grid = ParamGridBuilder().addGrid(gbt.maxIter, [10, 50, 100]).addGrid(gbt.maxDepth, [5, 10, 15]).build()
 
-# Define evaluators
+# Define evaluator
 binary_evaluator = BinaryClassificationEvaluator(labelCol="high_demand_product", rawPredictionCol="prediction", metricName="areaUnderROC")
 
 # Perform walk-forward validation for each model

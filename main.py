@@ -19,6 +19,7 @@ import script.clv_prediction as clv
 from script import customer_segmentation as segmentation
 from script.customer_segmentation import run_customer_segmentation
 from script import visualizations
+from sklearn.model_selection import train_test_split
 
 # Ensure directories exist
 os.makedirs('data', exist_ok=True)
@@ -55,6 +56,11 @@ if not os.path.exists(data_path):
     exit()
 
 data_df = spark.read.csv(data_path, header=True, inferSchema=True)
+
+# Debug churn counts right after loading the CSV
+print("Raw churn counts:", data_df.groupBy("churn").count().show())
+print("Unique churn values:", data_df.select("churn").distinct().show())
+data_df.show(5)
 
 # Extract necessary tables
 # Extract necessary tables with clearly defined column selections
@@ -118,14 +124,14 @@ product_df.show(5)
 
 # Preprocess data
 print("Running preprocessing...")
-cleaned_customer_df, cleaned_transaction_df, cleaned_product_df, monthly_sales_trends = data_preprocessing.clean_data(customer_df, transaction_df, product_df)
+cleaned_customer_df, cleaned_transaction_df, cleaned_product_df = data_preprocessing.clean_data(customer_df, transaction_df, product_df)
 
 # Show cleaned samples
 print("Cleaned Customer DataFrame:")
-cleaned_customer_df.show()
+cleaned_customer_df.show(3)
 
 print("Cleaned Transaction DataFrame:")
-cleaned_transaction_df.show()
+cleaned_transaction_df.show(3)
 
 # Run predictive models
 print("Running Sales Forecasting...")
@@ -170,8 +176,57 @@ visualizations.plot_sales_by_category(data_df, category_col='region')
 # Show any pending matplotlib visuals
 plt.show()
 
+# Example: Splitting data into train/test sets
+
+
+# Assuming cleaned_transaction_df is already preprocessed
+sales_data = cleaned_transaction_df.select("total_sales", "transaction_date").toPandas()
+sales_data["transaction_date"] = pd.to_datetime(sales_data["transaction_date"])
+sales_data = sales_data.set_index("transaction_date").asfreq("D").reset_index()
+
+X = sales_data.drop(columns=["total_sales"])
+y = sales_data["total_sales"]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+# Run sales forecasting and get trained models, predictions, and metrics
+rf, lr, xgb, y_pred_lr, metrics_df = sales_forecasting.run_sales_forecasting(X_train, X_test, y_train, y_test)
+
+# Plot feature importance for Random Forest
+import matplotlib.pyplot as plt
+feature_importance = rf.feature_importances_
+plt.barh(X_train.columns, feature_importance)
+plt.xlabel("Feature Importance")
+plt.ylabel("Features")
+plt.title("Random Forest Feature Importance")
+plt.show()
+
+# Residuals Plot
+residuals = y_test - y_pred_lr
+plt.scatter(y_test, residuals)
+plt.axhline(0, color='red', linestyle='--')
+plt.title("Residual Plot")
+plt.xlabel("True Values")
+plt.ylabel("Residuals")
+plt.show()
+
+# Log model comparison metrics
+print("Model Comparison:")
+print(metrics_df)
+
 # Stop Spark session
 spark.stop()
 
 # Log current directory
 print("Current working directory:", os.getcwd())
+
+import seaborn as sns
+sns.boxplot(y=sales_data["total_sales"])
+plt.title("Boxplot of Total Sales")
+plt.show()
+
+sales_data["total_sales"] = sales_data["total_sales"].clip(
+    lower=sales_data["total_sales"].quantile(0.01),
+    upper=sales_data["total_sales"].quantile(0.99)
+)
+
