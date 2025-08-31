@@ -114,23 +114,25 @@ def run_forecasting(cleaned_transaction_df):
 
     # Evaluate models
     from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    import numpy as np
+
     metrics = {
         "Linear Regression": {
             "MAE": mean_absolute_error(y_test, y_pred_lr),
             "MSE": mean_squared_error(y_test, y_pred_lr),
-            "RMSE": mean_squared_error(y_test, y_pred_lr, squared=False),
+            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred_lr)),  # Manually calculate RMSE
             "R2": r2_score(y_test, y_pred_lr),
         },
         "Random Forest": {
             "MAE": mean_absolute_error(y_test, y_pred_rf),
             "MSE": mean_squared_error(y_test, y_pred_rf),
-            "RMSE": mean_squared_error(y_test, y_pred_rf, squared=False),
+            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred_rf)),  # Manually calculate RMSE
             "R2": r2_score(y_test, y_pred_rf),
         },
         "XGBoost": {
             "MAE": mean_absolute_error(y_test, y_pred_xgb),
             "MSE": mean_squared_error(y_test, y_pred_xgb),
-            "RMSE": mean_squared_error(y_test, y_pred_xgb, squared=False),
+            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred_xgb)),  # Manually calculate RMSE
             "R2": r2_score(y_test, y_pred_xgb),
         },
     }
@@ -142,6 +144,28 @@ def run_forecasting(cleaned_transaction_df):
     # Save the best model
     best_model = max(metrics, key=lambda x: metrics[x]["R2"])
     print(f"\n🏆 Best Model: {best_model}")
+
+    # Return metrics for all models
+    return {
+        "Linear Regression": {
+            "MAE": mean_absolute_error(y_test, y_pred_lr),
+            "MSE": mean_squared_error(y_test, y_pred_lr),
+            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred_lr)),
+            "R2": r2_score(y_test, y_pred_lr),
+        },
+        "Random Forest": {
+            "MAE": mean_absolute_error(y_test, y_pred_rf),
+            "MSE": mean_squared_error(y_test, y_pred_rf),
+            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred_rf)),
+            "R2": r2_score(y_test, y_pred_rf),
+        },
+        "XGBoost": {
+            "MAE": mean_absolute_error(y_test, y_pred_xgb),
+            "MSE": mean_squared_error(y_test, y_pred_xgb),
+            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred_xgb)),
+            "R2": r2_score(y_test, y_pred_xgb),
+        },
+    }
 
 def run_sales_forecasting(X_train, X_test, y_train, y_test):
     print("Missing values in X_train:", X_train.isnull().sum())

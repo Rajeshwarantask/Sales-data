@@ -13,8 +13,14 @@ from script.visualizations import plot_confusion_matrix_custom
 from imblearn.over_sampling import SMOTE
 import pyspark.sql.functions as F
 
-def run_churn_prediction(cleaned_customer_df):
+def run_churn_prediction(cleaned_customer_df, cleaned_transaction_df):
     print("\n📦 Starting Churn Prediction...\n")
+
+    # Add `last_purchase_date` to `cleaned_customer_df`
+    last_purchase = cleaned_transaction_df.groupBy("customer_id").agg(
+        F.max("transaction_date").alias("last_purchase_date")
+    )
+    cleaned_customer_df = cleaned_customer_df.join(last_purchase, on="customer_id", how="left")
 
     # Add RFM features
     rfm = cleaned_customer_df.groupBy("customer_id").agg(
@@ -24,10 +30,14 @@ def run_churn_prediction(cleaned_customer_df):
     )
 
     # Calculate recency
-    max_date = cleaned_customer_df.agg(F.max("last_purchase_date")).collect()[0][0]
+    max_date = cleaned_transaction_df.agg(F.max("transaction_date")).collect()[0][0]
     rfm = rfm.withColumn("recency", F.datediff(F.lit(max_date), F.col("last_purchase")))
 
     # Add tenure (days since first purchase)
+    first_purchase = cleaned_transaction_df.groupBy("customer_id").agg(
+        F.min("transaction_date").alias("first_purchase_date")
+    )
+    rfm = rfm.join(first_purchase, on="customer_id", how="left")
     rfm = rfm.withColumn("tenure", F.datediff(F.lit(max_date), F.col("first_purchase_date")))
 
     # Label churners (e.g., no purchase in the last 90 days)
@@ -197,6 +207,28 @@ def run_churn_prediction(cleaned_customer_df):
             plt.show()
 
     print("✅ Churn prediction completed.\n")
+
+    # Return metrics for all models
+    return {
+        "Logistic Regression": {
+            "Accuracy": accuracy_score(y_test, y_pred_lr),
+            "Precision": precision_score(y_test, y_pred_lr),
+            "Recall": recall_score(y_test, y_pred_lr),
+            "F1": f1_score(y_test, y_pred_lr),
+        },
+        "Random Forest": {
+            "Accuracy": accuracy_score(y_test, y_pred_rf),
+            "Precision": precision_score(y_test, y_pred_rf),
+            "Recall": recall_score(y_test, y_pred_rf),
+            "F1": f1_score(y_test, y_pred_rf),
+        },
+        "XGBoost": {
+            "Accuracy": accuracy_score(y_test, y_pred_xgb),
+            "Precision": precision_score(y_test, y_pred_xgb),
+            "Recall": recall_score(y_test, y_pred_xgb),
+            "F1": f1_score(y_test, y_pred_xgb),
+        },
+    }
 
 def evaluate_classification_model(model, X_test, y_test):
     y_pred = model.predict(X_test)

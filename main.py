@@ -133,30 +133,45 @@ cleaned_customer_df.show(3)
 print("Cleaned Transaction DataFrame:")
 cleaned_transaction_df.show(3)
 
-# Run predictive models
-print("Running Sales Forecasting...")
-sales_forecasting.run_forecasting(cleaned_transaction_df)
+# Initialize a results summary dictionary
+results_summary = {}
 
-print("Running Sales sales trend...")
-sales_trends.run_sales_trends_analysis(cleaned_transaction_df)
-
+# Run Churn Prediction
 print("Running Churn Prediction...")
-churn_prediction.run_churn_prediction(cleaned_customer_df)
+churn_results = churn_prediction.run_churn_prediction(cleaned_customer_df, cleaned_transaction_df)
+results_summary["Churn Prediction"] = churn_results
 
-print("Running Promotion Optimization...")
-promotion_optimization.run_promotion_optimization(cleaned_customer_df, cleaned_transaction_df)
+# Run Sales Forecasting
+print("Running Sales Forecasting...")
+sales_forecasting_results = sales_forecasting.run_forecasting(cleaned_transaction_df)
+results_summary["Sales Forecasting"] = sales_forecasting_results
 
+# Run Customer Segmentation
 print("Running Customer Segmentation...")
-segmentation.run_customer_segmentation(cleaned_customer_df)
+segmentation_results = segmentation.run_customer_segmentation(cleaned_customer_df)
+results_summary["Customer Segmentation"] = segmentation_results
 
+# Run Promotion Optimization
+print("Running Promotion Optimization...")
+promotion_results = promotion_optimization.run_promotion_optimization(cleaned_customer_df, cleaned_transaction_df)
+results_summary["Promotion Optimization"] = promotion_results
+
+# Run Seasonality Analysis
 print("Running Seasonality Analysis...")
-seasonality.run_seasonality_analysis(cleaned_transaction_df)
+seasonality_results = seasonality.run_seasonality_analysis(cleaned_transaction_df)
+results_summary["Seasonality Analysis"] = seasonality_results
 
+# Run Customer Lifetime Value Prediction
 print("Running Customer Lifetime Value Prediction...")
-clv.predict_clv(cleaned_customer_df)
+clv_results = clv.predict_clv(cleaned_customer_df)
+results_summary["Customer Lifetime Value Prediction"] = clv_results
 
-print("Running Price Sensitivity and Discount Effectiveness Analysis...")
-price_sensitivity.analyze_price_sensitivity_and_discount(cleaned_transaction_df)
+# Print the results summary
+print("\n📊 Model Comparison Summary:")
+for task, metrics in results_summary.items():
+    print(f"\n{task}:")
+    for model, scores in metrics.items():
+        print(f"  {model}: {scores}")
 
 
 # Run visualizations (uses pandas, so re-load as needed if required)

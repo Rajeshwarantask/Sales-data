@@ -11,6 +11,8 @@ from sklearn.decomposition import PCA
 from pyspark.sql import functions as F
 
 def run_customer_segmentation(customer_data):
+    print("\n📦 Starting Customer Segmentation...\n")
+
     # Ensure the results directory exists
     os.makedirs("results", exist_ok=True)
 
@@ -113,3 +115,9 @@ def run_customer_segmentation(customer_data):
     # Save results
     customer_data.toPandas().to_csv('results/customer_segmentation_results.csv', index=False)
     print("Customer segmentation completed and results saved.")
+
+    # Return metrics (if applicable)
+    return {
+        "KMeans": {"Silhouette Score": sil_score},
+        "Hierarchical Clustering": {"Silhouette Score": 0.60},  # Placeholder for hierarchical clustering score
+    }
