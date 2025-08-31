@@ -1,3 +1,8 @@
+"""
+Enhanced Sales Big Data Analysis Pipeline
+Integrates advanced ML algorithms, feature engineering, and ensemble methods
+"""
+
 import os
 import sys
 import pandas as pd
@@ -7,8 +12,12 @@ warnings.filterwarnings('ignore')
 
 # Set environment variables
 os.environ['LOKY_MAX_CPU_COUNT'] = '4'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress TensorFlow warnings
 
-# Import all modules
+# Add script directory to path
+sys.path.append('script')
+
+# Import enhanced modules
 from script.external_data_integration import ExternalDataIntegrator
 from script.advanced_feature_engineering import AdvancedFeatureEngineer
 from script.hyperparameter_optimization import HyperparameterOptimizer
@@ -365,7 +374,7 @@ def run_enhanced_pipeline():
     if not os.path.exists(data_path):
         print(f"❌ Data file not found: {data_path}")
         print("Please ensure the data file exists at the specified path.")
-        return
+        return None, None
     
     try:
         # Load and prepare data

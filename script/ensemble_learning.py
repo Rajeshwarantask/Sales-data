@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import KFold, StratifiedKFold, cross_val_score
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.metrics import mean_squared_error, accuracy_score, r2_score
@@ -240,9 +240,9 @@ def create_ensemble_models():
     
     return ensembles
 
-def save_ensemble_models(ensembles, filepath_prefix='results/ensemble_'):
+def save_ensemble_models(ensembles, filepath_prefix='models/ensemble_'):
     """Save trained ensemble models"""
-    os.makedirs('results', exist_ok=True)
+    os.makedirs('models', exist_ok=True)
     
     for name, ensemble in ensembles.items():
         filepath = f"{filepath_prefix}{name}.pkl"

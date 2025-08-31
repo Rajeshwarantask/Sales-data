@@ -49,3 +49,36 @@ ENSEMBLE_SETTINGS = {
     'use_feature_selection': True,
     'n_features_select': 50
 }
+
+# Performance thresholds
+PERFORMANCE_THRESHOLDS = {
+    'regression': {
+        'r2_score': 0.85,
+        'rmse_threshold': 0.15
+    },
+    'classification': {
+        'f1_score': 0.85,
+        'accuracy': 0.90,
+        'precision': 0.85,
+        'recall': 0.85
+    },
+    'clustering': {
+        'silhouette_score': 0.6
+    }
+}
+
+# Advanced model configurations
+ADVANCED_MODEL_CONFIGS = {
+    'neural_network': {
+        'hidden_layers': [[128, 64, 32], [256, 128, 64], [64, 32, 16]],
+        'dropout': [0.2, 0.3, 0.4],
+        'epochs': [50, 100, 150],
+        'batch_size': [32, 64, 128]
+    },
+    'lstm': {
+        'sequence_length': [15, 30, 60],
+        'units': [32, 50, 100],
+        'dropout': [0.1, 0.2, 0.3],
+        'layers': [1, 2, 3]
+    }
+}
