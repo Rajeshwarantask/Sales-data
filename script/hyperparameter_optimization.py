@@ -1,23 +1,54 @@
+import os
 import optuna
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
-from sklearn.metrics import mean_squared_error, accuracy_score
+from sklearn.model_selection import cross_val_score, train_test_split, KFold
+from sklearn.metrics import mean_squared_error
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.decomposition import PCA
 import lightgbm as lgb
-import catboost as cb
 import xgboost as xgb
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-import warnings
-warnings.filterwarnings('ignore')
+from optuna.pruners import MedianPruner
 
 class HyperparameterOptimizer:
-    def __init__(self, n_trials=100, cv_folds=5, random_state=42):
+    def __init__(self, n_trials=50):
         self.n_trials = n_trials
-        self.cv_folds = cv_folds
-        self.random_state = random_state
         self.best_params = {}
         self.study_results = {}
-        
+        self.random_state = 42
+        self.cv_folds = 3  # Default CV folds
+
+    def optimize_model(self, model, X_train, y_train, demo_mode=False):
+        """Optimize hyperparameters for a given model."""
+        print(f"🔍 Optimizing {model.__class__.__name__}...")
+
+        # Sample the dataset for DEMO mode
+        if demo_mode:
+            print("🔎 DEMO mode active: sampling 10k rows for speed")
+            X_train = X_train.sample(n=10000, random_state=42) if len(X_train) > 10000 else X_train
+            y_train = y_train.loc[X_train.index]
+
+        def objective(trial):
+            # Define hyperparameter search space
+            params = {
+                'n_estimators': trial.suggest_int('n_estimators', 50, 300),
+                'max_depth': trial.suggest_int('max_depth', 3, 10),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+                'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+            }
+            # Update model parameters
+            model.set_params(**params)
+
+            # Cross-validation
+            scores = cross_val_score(model, X_train, y_train, cv=self.cv_folds, scoring='neg_mean_squared_error')
+            return -scores.mean()
+
+        # Create a new study with a unique name for testing
+        study = optuna.create_study(direction='minimize', pruner=MedianPruner(), study_name="test_sales_forecasting", load_if_exists=False)
+        study.optimize(objective, n_trials=self.n_trials, timeout=300)  # Use self.n_trials for dynamic adjustment
+
+        print(f"✅ Best parameters: {study.best_params}")
+        return study.best_params
+
     def optimize_lightgbm_regressor(self, X, y):
         """Optimize LightGBM regressor hyperparameters"""
         def objective(trial):
@@ -39,38 +70,21 @@ class HyperparameterOptimizer:
             kf = KFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state)
             scores = cross_val_score(model, X, y, cv=kf, scoring='neg_mean_squared_error')
             return -scores.mean()
-        
-        study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=self.n_trials)
-        
+    
+        # Use SQLite for parallel storage
+        storage = optuna.storages.RDBStorage("sqlite:///optuna.db")
+        study = optuna.create_study(
+            direction="minimize", 
+            storage=storage, 
+            study_name="sales_forecasting_lightgbm", 
+            load_if_exists=True
+        )
+
+        # Run trials dynamically based on mode
+        study.optimize(objective, n_trials=self.n_trials, n_jobs=4)
+    
         self.best_params['lightgbm_regressor'] = study.best_params
         self.study_results['lightgbm_regressor'] = study
-        
-        return study.best_params
-    
-    def optimize_catboost_regressor(self, X, y):
-        """Optimize CatBoost regressor hyperparameters"""
-        def objective(trial):
-            params = {
-                'iterations': trial.suggest_int('iterations', 100, 1000),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
-                'depth': trial.suggest_int('depth', 3, 10),
-                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10),
-                'border_count': trial.suggest_int('border_count', 32, 255),
-                'random_state': self.random_state,
-                'verbose': False
-            }
-            
-            model = cb.CatBoostRegressor(**params)
-            kf = KFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state)
-            scores = cross_val_score(model, X, y, cv=kf, scoring='neg_mean_squared_error')
-            return -scores.mean()
-        
-        study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=self.n_trials)
-        
-        self.best_params['catboost_regressor'] = study.best_params
-        self.study_results['catboost_regressor'] = study
         
         return study.best_params
     
@@ -93,9 +107,18 @@ class HyperparameterOptimizer:
             kf = KFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state)
             scores = cross_val_score(model, X, y, cv=kf, scoring='neg_mean_squared_error')
             return -scores.mean()
-        
-        study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=self.n_trials)
+    
+        # Use SQLite for parallel storage
+        storage = optuna.storages.RDBStorage("sqlite:///optuna.db")
+        study = optuna.create_study(
+            direction="minimize", 
+            storage=storage, 
+            study_name="sales_forecasting_xgboost",  # Unique study name for XGBoost
+            load_if_exists=True
+        )
+
+        # Run trials in parallel (e.g., using multiprocessing)
+        study.optimize(objective, n_trials=20, n_jobs=4)  # Use 4 parallel workers
         
         self.best_params['xgboost_regressor'] = study.best_params
         self.study_results['xgboost_regressor'] = study
@@ -118,9 +141,18 @@ class HyperparameterOptimizer:
             kf = KFold(n_splits=self.cv_folds, shuffle=True, random_state=self.random_state)
             scores = cross_val_score(model, X, y, cv=kf, scoring='neg_mean_squared_error')
             return -scores.mean()
-        
-        study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=self.n_trials)
+    
+        # Use SQLite for parallel storage
+        storage = optuna.storages.RDBStorage("sqlite:///optuna.db")
+        study = optuna.create_study(
+            direction="minimize", 
+            storage=storage, 
+            study_name="sales_forecasting_randomforest",  # Unique study name for Random Forest
+            load_if_exists=True
+        )
+
+        # Run trials in parallel (e.g., using multiprocessing)
+        study.optimize(objective, n_trials=20, n_jobs=4)  # Use 4 parallel workers
         
         self.best_params['random_forest_regressor'] = study.best_params
         self.study_results['random_forest_regressor'] = study
@@ -133,7 +165,6 @@ class HyperparameterOptimizer:
         
         optimizers = {
             'lightgbm': self.optimize_lightgbm_regressor,
-            'catboost': self.optimize_catboost_regressor,
             'xgboost': self.optimize_xgboost_regressor,
             'random_forest': self.optimize_random_forest_regressor
         }
@@ -157,9 +188,6 @@ class HyperparameterOptimizer:
         
         if 'lightgbm_regressor' in self.best_params:
             models['lightgbm'] = lgb.LGBMRegressor(**self.best_params['lightgbm_regressor'])
-        
-        if 'catboost_regressor' in self.best_params:
-            models['catboost'] = cb.CatBoostRegressor(**self.best_params['catboost_regressor'])
         
         if 'xgboost_regressor' in self.best_params:
             models['xgboost'] = xgb.XGBRegressor(**self.best_params['xgboost_regressor'])
@@ -190,3 +218,27 @@ class HyperparameterOptimizer:
             json.dump(results, f, indent=2)
         
         print(f"Optimization results saved to {filepath}")
+
+def apply_pca(X_train, X_test, n_components=50):
+    """Apply PCA to reduce dimensionality."""
+    from sklearn.decomposition import PCA
+    pca = PCA(n_components=n_components, random_state=42)
+    X_train_pca = pca.fit_transform(X_train)
+    X_test_pca = pca.transform(X_test)
+    return X_train_pca, X_test_pca
+
+# Example for LightGBM
+model = lgb.LGBMRegressor(
+    n_estimators=1000,
+    learning_rate=0.1,
+    device='gpu',  # Enable GPU
+    random_state=42
+)
+
+# Example for XGBoost
+model = xgb.XGBRegressor(
+    n_estimators=1000,
+    learning_rate=0.1,
+    tree_method='gpu_hist',  # Enable GPU
+    random_state=42
+)

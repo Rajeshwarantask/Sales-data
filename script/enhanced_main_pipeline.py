@@ -21,15 +21,25 @@ sys.path.append('script')
 from script.external_data_integration import ExternalDataIntegrator
 from script.advanced_feature_engineering import AdvancedFeatureEngineer
 from script.hyperparameter_optimization import HyperparameterOptimizer
-from script.ensemble_learning import create_ensemble_models, save_ensemble_models
-from script.advanced_evaluation import AdvancedEvaluator
+from script.advanced_evaluation import AdvancedEvaluator, evaluate_models  # Import evaluate_models
 from script.advanced_algorithms import get_advanced_models
-from script.data_preprocessing import clean_data
+from script.data_preprocessing import clean_data, preprocess_data  # Replace load_data with clean_data
+from script.feature_engineering import feature_engineering_pipeline as feature_engineering
 from imblearn.over_sampling import SMOTE
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
+from sklearn.feature_selection import SelectKBest, f_regression
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.feature_selection import SelectFromModel
 import joblib
 import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.sparse import csr_matrix
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from xgboost import XGBRegressor
+import lightgbm as lgb  # Import LightGBM
+import xgboost as xgb  # Import XGBoost
+from pandas.api.types import is_numeric_dtype
 
 class EnhancedSalesPipeline:
     def __init__(self):
@@ -62,135 +72,98 @@ class EnhancedSalesPipeline:
         df = self.feature_engineer.engineer_all_features(df)
         
         print(f"After feature engineering: {len(df.columns)} features")
+        
+        # Frequency encode high-cardinality columns
+        high_cardinality_cols = [col for col in df.select_dtypes(exclude=[np.number]).columns if df[col].nunique() > 50]
+        for col in high_cardinality_cols:
+            df = frequency_encode(df, col)
+        
         return df
     
-    def prepare_modeling_data(self, df, target_col, task_type='regression'):
-        """Prepare data for modeling with proper preprocessing"""
+    def prepare_modeling_data(self, df, target_col, task='regression'):
+        """Prepare data for modeling."""
         print("🔧 Preparing modeling data...")
-        
-        # Remove rows with missing target
-        df = df.dropna(subset=[target_col])
-        
-        # Separate features and target
-        feature_cols = [col for col in df.columns if col not in [
-            target_col, 'transaction_date', 'customer_id', 'product_id', 'transaction_id'
-        ]]
-        
-        X = df[feature_cols]
+
+        # Separate features (X) and target (y)
+        X = df.drop(columns=[target_col])
         y = df[target_col]
-        
-        # Handle missing values in features
-        X = X.fillna(X.median() if X.select_dtypes(include=[np.number]).shape[1] > 0 else 0)
-        
-        # Feature selection
-        if len(feature_cols) > 100:
-            X_selected, selected_features, selector = self.feature_engineer.select_features(
-                X, y, method='mutual_info', k=min(50, len(feature_cols))
-            )
-            X = pd.DataFrame(X_selected, columns=selected_features, index=X.index)
-            print(f"Selected {len(selected_features)} most important features")
-        
-        # Train-test split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, 
-            stratify=y if task_type == 'classification' else None
-        )
-        
-        # Handle class imbalance for classification
-        if task_type == 'classification':
-            print("Applying SMOTE for class imbalance...")
-            smote = SMOTE(random_state=42)
-            X_train, y_train = smote.fit_resample(X_train, y_train)
-        
-        # Scale features
+
+        # Handle missing values
+        print("🔍 Handling missing values...")
+        X = X.fillna(0)  # Replace NaN values with 0
+
+        # Encode categorical variables
+        print("🔍 Encoding categorical variables...")
+        categorical_cols = X.select_dtypes(include=['object', 'category']).columns
+        X = pd.get_dummies(X, columns=categorical_cols, drop_first=True)
+
+        # Drop any remaining non-numeric columns
+        from pandas.api.types import is_numeric_dtype
+        non_numeric_cols = [col for col in X.columns if not is_numeric_dtype(X[col])]
+        if non_numeric_cols:
+            print(f"Dropping non-numeric columns: {non_numeric_cols}")
+            X = X.drop(columns=non_numeric_cols)
+
+        # Scale numeric features
+        print("🔍 Scaling numeric features...")
+        numeric_cols = X.select_dtypes(include=[np.number]).columns
         scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-        
-        # Convert back to DataFrame
-        X_train = pd.DataFrame(X_train_scaled, columns=X.columns)
-        X_test = pd.DataFrame(X_test_scaled, columns=X.columns)
-        
+        X[numeric_cols] = scaler.fit_transform(X[numeric_cols])
+
+        # Train-test split
+        print("🔍 Splitting data into train and test sets...")
+        if task == 'classification':
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+        else:
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
         return X_train, X_test, y_train, y_test, scaler
     
-    def run_sales_forecasting(self, df):
+    def run_sales_forecasting(self, df, demo_mode=False):
         """Enhanced sales forecasting with advanced models"""
         print("\n📈 Running Enhanced Sales Forecasting...")
-        
+
         # Prepare data
-        X_train, X_test, y_train, y_test, scaler = self.prepare_modeling_data(
-            df, 'total_sales', 'regression'
-        )
-        
-        # Hyperparameter optimization
-        print("🔍 Optimizing hyperparameters...")
-        optimized_params = self.hyperopt.optimize_all_models(X_train, y_train, 'regression')
-        
-        # Get optimized models
-        models = self.hyperopt.get_optimized_models('regression')
-        
-        # Add advanced models
-        advanced_models = get_advanced_models()
-        models.update(advanced_models)
-        
+        X_train, X_test, y_train, y_test, scaler = self.prepare_modeling_data(df, 'total_sales')
+
+        # Use static hyperparameters in DEMO mode
+        if demo_mode:
+            print("⚡ Using static hyperparameters for DEMO mode")
+            models = {
+                'lightgbm': lgb.LGBMRegressor(n_estimators=100, learning_rate=0.1, max_depth=5, random_state=42),
+                'xgboost': xgb.XGBRegressor(n_estimators=100, learning_rate=0.1, max_depth=5, random_state=42),
+                'random_forest': RandomForestRegressor(n_estimators=100, max_depth=5, random_state=42)
+            }
+        else:
+            # Hyperparameter optimization
+            print("🔍 Optimizing hyperparameters...")
+            optimized_params = self.hyperopt.optimize_all_models(X_train, y_train, 'regression')
+            models = {
+                'lightgbm': lgb.LGBMRegressor(**optimized_params['lightgbm']),
+                'xgboost': xgb.XGBRegressor(**optimized_params['xgboost']),
+                'random_forest': RandomForestRegressor(**optimized_params['random_forest'])
+            }
+
         # Train and evaluate models
         results = {}
         trained_models = {}
-        
+
         for name, model in models.items():
             print(f"Training {name}...")
-            try:
-                model.fit(X_train, y_train)
-                trained_models[name] = model
-                
-                # Evaluate
-                metrics = self.evaluator.evaluate_regression_model(
-                    model, X_test, y_test, name
-                )
-                results[name] = metrics
-                
-                # Plot learning curves for key models
-                if name in ['random_forest', 'xgboost', 'lightgbm']:
-                    self.evaluator.plot_learning_curves(model, X_train, y_train, name)
-                
-                # Plot residuals
-                y_pred = model.predict(X_test)
-                self.evaluator.plot_residuals(y_test, y_pred, name)
-                
-                # Feature importance
-                if hasattr(model, 'feature_importances_'):
-                    self.evaluator.plot_feature_importance(
-                        model, X_train.columns, name
-                    )
-                
-            except Exception as e:
-                print(f"Error with {name}: {e}")
-                continue
-        
-        # Ensemble learning
-        print("🤖 Training ensemble models...")
-        ensemble_models = create_ensemble_models()
-        
-        for name, ensemble in ensemble_models.items():
-            print(f"Training {name} ensemble...")
-            try:
-                ensemble.fit(X_train, y_train)
-                trained_models[f'ensemble_{name}'] = ensemble
-                
-                metrics = self.evaluator.evaluate_regression_model(
-                    ensemble, X_test, y_test, f'Ensemble_{name}'
-                )
-                results[f'ensemble_{name}'] = metrics
-                
-            except Exception as e:
-                print(f"Error with {name} ensemble: {e}")
-        
-        # Save models
-        save_ensemble_models(ensemble_models)
-        for name, model in trained_models.items():
-            joblib.dump(model, f'models/{name}_sales_forecasting.pkl')
-        
-        self.results_summary['Sales Forecasting'] = results
+            model.fit(X_train, y_train)
+            trained_models[name] = model
+
+            # Evaluate
+            y_pred = model.predict(X_test)
+            mse = mean_squared_error(y_test, y_pred)
+            rmse = np.sqrt(mse)
+            results[name] = {
+                'MSE': mse,
+                'RMSE': rmse,
+                'MAE': mean_absolute_error(y_test, y_pred),
+                'R²': r2_score(y_test, y_pred)
+            }
+
         return results, trained_models
     
     def run_churn_prediction(self, df):
@@ -250,25 +223,23 @@ class EnhancedSalesPipeline:
     def run_customer_segmentation(self, df):
         """Enhanced customer segmentation"""
         print("\n👥 Running Enhanced Customer Segmentation...")
-        
+
         from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
         from sklearn.mixture import GaussianMixture
         from sklearn.metrics import silhouette_score, calinski_harabasz_score
-        
-        # Prepare customer features
-        customer_features = [
-            'age', 'income_bracket', 'membership_years', 'customer_total_sales_sum',
-            'customer_total_sales_mean', 'customer_transactions_count', 'app_usage',
-            'website_visits', 'social_media_engagement'
-        ]
-        
-        available_features = [f for f in customer_features if f in df.columns]
-        X = df[available_features].fillna(0)
-        
+
+        # Select only numeric features
+        print("🔍 Selecting numeric features for clustering...")
+        numeric_cols = df.select_dtypes(include=['number']).columns
+        if len(numeric_cols) == 0:
+            raise ValueError("No numeric features available for clustering.")
+        X = df[numeric_cols].fillna(0)  # Replace NaN values with 0
+
         # Scale features
+        print("🔍 Scaling numeric features...")
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
-        
+
         # Try different clustering algorithms
         clustering_models = {
             'kmeans_3': KMeans(n_clusters=3, random_state=42),
@@ -277,28 +248,28 @@ class EnhancedSalesPipeline:
             'gaussian_mixture': GaussianMixture(n_components=4, random_state=42),
             'agglomerative': AgglomerativeClustering(n_clusters=4)
         }
-        
+
         results = {}
         for name, model in clustering_models.items():
             try:
                 labels = model.fit_predict(X_scaled)
-                
+
                 # Calculate metrics
                 silhouette = silhouette_score(X_scaled, labels)
                 calinski = calinski_harabasz_score(X_scaled, labels)
-                
+
                 results[name] = {
                     'Silhouette Score': silhouette,
                     'Calinski-Harabasz Score': calinski,
                     'N Clusters': len(np.unique(labels))
                 }
-                
+
                 # Save cluster labels
                 df[f'cluster_{name}'] = labels
-                
+
             except Exception as e:
                 print(f"Error with {name}: {e}")
-        
+
         self.results_summary['Customer Segmentation'] = results
         return results
     
@@ -364,7 +335,8 @@ class EnhancedSalesPipeline:
         plt.savefig('results/comprehensive_dashboard.png', dpi=300, bbox_inches='tight')
         plt.close()
 
-def run_enhanced_pipeline():
+
+def run_enhanced_pipeline(demo_mode=False):
     """Run the complete enhanced pipeline"""
     pipeline = EnhancedSalesPipeline()
     
@@ -379,6 +351,13 @@ def run_enhanced_pipeline():
     try:
         # Load and prepare data
         df = pipeline.load_and_prepare_data(data_path)
+
+        # DEMO MODE: use smaller dataset and fewer trials
+        if demo_mode:
+            print("🔎 DEMO mode active: sampling 10k rows for speed")
+            df = df.sample(n=10000, random_state=42)  # Reduce dataset further for demo
+            pipeline.hyperopt.n_trials = 5  # Limit to 5 trials per model
+            pipeline.hyperopt.cv_folds = 2  # Use 2-fold cross-validation for speed
         
         # Run sales forecasting
         sales_results, sales_models = pipeline.run_sales_forecasting(df)
@@ -406,6 +385,11 @@ def run_enhanced_pipeline():
         import traceback
         traceback.print_exc()
         return None, None
+
+def frequency_encode(df, column):
+    freq_map = df[column].value_counts(normalize=True).to_dict()
+    df[column] = df[column].map(freq_map)
+    return df
 
 if __name__ == "__main__":
     pipeline, report = run_enhanced_pipeline()

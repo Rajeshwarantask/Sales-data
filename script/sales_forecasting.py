@@ -4,6 +4,7 @@ from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from prophet import Prophet
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
 import pandas as pd
 import numpy as np
 import pickle
@@ -145,28 +146,21 @@ def run_forecasting(cleaned_transaction_df):
     best_model = max(metrics, key=lambda x: metrics[x]["R2"])
     print(f"\n🏆 Best Model: {best_model}")
 
-    # Return metrics for all models
-    return {
-        "Linear Regression": {
-            "MAE": mean_absolute_error(y_test, y_pred_lr),
-            "MSE": mean_squared_error(y_test, y_pred_lr),
-            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred_lr)),
-            "R2": r2_score(y_test, y_pred_lr),
-        },
-        "Random Forest": {
-            "MAE": mean_absolute_error(y_test, y_pred_rf),
-            "MSE": mean_squared_error(y_test, y_pred_rf),
-            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred_rf)),
-            "R2": r2_score(y_test, y_pred_rf),
-        },
-        "XGBoost": {
-            "MAE": mean_absolute_error(y_test, y_pred_xgb),
-            "MSE": mean_squared_error(y_test, y_pred_xgb),
-            "RMSE": np.sqrt(mean_squared_error(y_test, y_pred_xgb)),
-            "R2": r2_score(y_test, y_pred_xgb),
-        },
-    }
+    # Prophet
+    print("Training Prophet...")
+    prophet = Prophet()
+    prophet.fit(sales_daily_pd[["ds", "y"]])  # Use sales_daily_pd for Prophet
+    future = prophet.make_future_dataframe(periods=30)
+    forecast = prophet.predict(future)
 
+    # Holt-Winters
+    print("Training Holt-Winters...")
+    hw_model = ExponentialSmoothing(sales_daily_pd["y"], seasonal="add", seasonal_periods=12)
+    hw_fit = hw_model.fit()
+    hw_forecast = hw_fit.forecast(30)
+
+    # Return metrics for all models
+    return metrics
 def run_sales_forecasting(X_train, X_test, y_train, y_test):
     print("Missing values in X_train:", X_train.isnull().sum())
     print("Missing values in y_train:", y_train.isnull().sum())

@@ -5,6 +5,7 @@ from pyspark.sql.types import DoubleType, IntegerType, StringType, DateType
 from prophet import Prophet
 import pandas as pd
 from pyspark.sql.functions import col, to_date
+from sklearn.model_selection import KFold
 
 # Initialize Spark session
 spark = SparkSession.builder \
@@ -149,4 +150,24 @@ def clean_data(customer_df, transaction_df, product_df):
 
     # Return cleaned DataFrames
     return customer_df, transaction_df, product_df
+
+
+def preprocess_data(df):
+    """
+    Preprocess the dataset by handling missing values, encoding categorical variables, etc.
+
+    Args:
+        df (pd.DataFrame): The input dataset.
+
+    Returns:
+        pd.DataFrame: The preprocessed dataset.
+    """
+    # Handle missing values
+    df = df.fillna(0)  # Replace NaN values with 0
+
+    # Encode categorical variables
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns
+    df = pd.get_dummies(df, columns=categorical_cols, drop_first=True)
+
+    return df
 

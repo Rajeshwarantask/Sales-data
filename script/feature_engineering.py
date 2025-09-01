@@ -92,8 +92,8 @@ def add_rolling_statistics(df, windows=[3]):
         df[f'rolling_std_{window}'] = df['total_sales'].rolling(window=window).std()
     return df
 
-def feature_engineering_pipeline(df):
-    """Apply the full pipeline of feature engineering transformations."""
+def feature_engineering(df):
+    """Wrapper function to apply all feature engineering transformations."""
     df = robust_date_conversion(df)
     df = add_monthly_sales_trends(df)
     df = add_customer_lifetime_value(df)
@@ -106,6 +106,26 @@ def feature_engineering_pipeline(df):
     df = add_rolling_statistics(df)
     return df
 
+def feature_engineering_pipeline(df):
+    """
+    Perform feature engineering on the dataset.
+
+    Args:
+        df (pd.DataFrame): The input dataset.
+
+    Returns:
+        pd.DataFrame: The dataset with engineered features.
+    """
+    # Example transformations
+    df['log_sales'] = df['sales'].apply(lambda x: np.log1p(x)) if 'sales' in df.columns else df
+    df['sales_per_customer'] = df['sales'] / df['customers'] if 'sales' in df.columns and 'customers' in df.columns else df
+    df['month'] = pd.to_datetime(df['date']).dt.month if 'date' in df.columns else df
+
+    # Handle missing values
+    df = df.fillna(0)
+
+    return df
+
 if __name__ == "__main__":
     # Load data
     df = pd.read_csv('data/retail_data.csv')
@@ -114,7 +134,7 @@ if __name__ == "__main__":
     df = df.groupby(pd.Grouper(key="transaction_date", freq="W")).sum().reset_index()
     
     # Apply feature engineering
-    df = feature_engineering_pipeline(df)
+    df = feature_engineering(df)
     
     # Save processed dataset
     df.to_csv('data/retail_data_with_features.csv', index=False)

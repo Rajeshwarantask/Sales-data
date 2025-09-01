@@ -26,17 +26,32 @@ def main():
     """Main execution function"""
     print("🚀 Starting Enhanced Sales Big Data Analysis Pipeline")
     print("=" * 60)
-    
+
+    # Ask user for mode
+    mode = input("Select mode: [R]esearch or [D]emo: ").strip().lower()
+    if mode not in ["r", "d"]:
+        print("❌ Invalid choice. Defaulting to Demo Mode.")
+        mode = "d"
+
+    is_demo = (mode == "d")
+    print(f"\n⚡ Running in {'DEMO' if is_demo else 'RESEARCH'} mode\n")
+
     # Initialize visualizer
     visualizer = AdvancedVisualizer()
     
     try:
         # Run the enhanced pipeline
-        pipeline, final_report = run_enhanced_pipeline()
+        pipeline, final_report = run_enhanced_pipeline(demo_mode=is_demo)
         
         if pipeline is None:
             print("❌ Pipeline failed to complete")
             return
+        
+        # Save results
+        results_dir = "results/demo" if is_demo else "results/research"
+        os.makedirs(results_dir, exist_ok=True)
+        final_report.to_csv(os.path.join(results_dir, "final_report.csv"), index=False)
+        print(f"✅ Results saved to {results_dir}")
         
         # Create additional advanced visualizations
         print("\n🎨 Creating advanced visualizations...")

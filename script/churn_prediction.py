@@ -12,6 +12,7 @@ import os
 from script.visualizations import plot_confusion_matrix_custom
 from imblearn.over_sampling import SMOTE
 import pyspark.sql.functions as F
+from lightgbm import LGBMClassifier
 
 def run_churn_prediction(cleaned_customer_df, cleaned_transaction_df):
     print("\n📦 Starting Churn Prediction...\n")
@@ -25,7 +26,7 @@ def run_churn_prediction(cleaned_customer_df, cleaned_transaction_df):
     # Add RFM features from `cleaned_transaction_df`
     rfm = cleaned_transaction_df.groupBy("customer_id").agg(
         F.max("transaction_date").alias("last_purchase"),
-        F.count("transaction_id").alias("frequency"),  # Use `transaction_id` from `cleaned_transaction_df`
+        F.count("transaction_id").alias("frequency"),
         F.sum("total_sales").alias("monetary")
     )
 
@@ -46,11 +47,20 @@ def run_churn_prediction(cleaned_customer_df, cleaned_transaction_df):
     # Convert to Pandas for modeling
     rfm_pd = rfm.toPandas()
 
+    # Preprocess date columns
+    if "last_purchase" in rfm_pd.columns:
+        rfm_pd["last_purchase"] = (pd.to_datetime(max_date) - pd.to_datetime(rfm_pd["last_purchase"])).dt.days
+    if "first_purchase_date" in rfm_pd.columns:
+        rfm_pd["first_purchase_date"] = (pd.to_datetime(max_date) - pd.to_datetime(rfm_pd["first_purchase_date"])).dt.days
+
     # Split into train and test sets
-    from sklearn.model_selection import train_test_split
     X = rfm_pd.drop(columns=["customer_id", "churn"])
     y = rfm_pd["churn"]
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    # Sample the dataset for training (50k rows max)
+    X_train_sample = X_train.sample(n=50000, random_state=42) if len(X_train) > 50000 else X_train
+    y_train_sample = y_train.loc[X_train_sample.index]
 
     # Train models
     print("Training Logistic Regression...")
@@ -59,17 +69,53 @@ def run_churn_prediction(cleaned_customer_df, cleaned_transaction_df):
     lr.fit(X_train, y_train)
     y_pred_lr = lr.predict(X_test)
 
-    print("Training Random Forest...")
     from sklearn.ensemble import RandomForestClassifier
-    rf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
-    rf.fit(X_train, y_train)
+
+    # Lightweight Random Forest parameters
+    print("Training Random Forest...")
+    rf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1)
+    rf.fit(X_train_sample, y_train_sample)
     y_pred_rf = rf.predict(X_test)
 
-    print("Training XGBoost...")
     from xgboost import XGBClassifier
-    xgb = XGBClassifier(n_estimators=100, learning_rate=0.01, max_depth=3, random_state=42)
-    xgb.fit(X_train, y_train)
+
+    # Lightweight XGBoost parameters
+    params = {
+        "max_depth": 5,              # Small trees
+        "n_estimators": 200,         # Limited number of trees
+        "learning_rate": 0.1,        # Decent speed
+        "subsample": 0.8,            # Random sampling
+        "colsample_bytree": 0.8,     # Random features
+        "tree_method": "hist",       # Low memory usage
+        "eval_metric": "logloss",    # Suitable for classification
+        "random_state": 42
+    }
+
+    # Train on a smaller sample if the dataset is too large
+    X_small = X_train.sample(n=50000, random_state=42) if len(X_train) > 50000 else X_train
+    y_small = y_train.loc[X_small.index]
+
+    # Train XGBoost
+    print("Training XGBoost...")
+    xgb = XGBClassifier(**params)
+    xgb.fit(X_small, y_small)
     y_pred_xgb = xgb.predict(X_test)
+
+    # Lightweight LightGBM parameters
+    params = {
+        "max_depth": 5,              # Small trees
+        "n_estimators": 200,         # Limited number of trees
+        "learning_rate": 0.1,        # Decent speed
+        "subsample": 0.8,            # Random sampling
+        "colsample_bytree": 0.8,     # Random features
+        "random_state": 42
+    }
+
+    # Train LightGBM
+    print("Training LightGBM...")
+    lgbm = LGBMClassifier(**params)
+    lgbm.fit(X_train, y_train)
+    y_pred_lgbm = lgbm.predict(X_test)
 
     # Evaluate models
     from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
@@ -91,6 +137,12 @@ def run_churn_prediction(cleaned_customer_df, cleaned_transaction_df):
             "Precision": precision_score(y_test, y_pred_xgb),
             "Recall": recall_score(y_test, y_pred_xgb),
             "F1": f1_score(y_test, y_pred_xgb),
+        },
+        "LightGBM": {
+            "Accuracy": accuracy_score(y_test, y_pred_lgbm),
+            "Precision": precision_score(y_test, y_pred_lgbm),
+            "Recall": recall_score(y_test, y_pred_lgbm),
+            "F1": f1_score(y_test, y_pred_lgbm),
         },
     }
 
@@ -117,3 +169,56 @@ def evaluate_classification_model(model, X_test, y_test):
         "F1 Score": f1_score(y_test, y_pred),
     }
     return metrics
+def run_churn_prediction(self, df):
+    """Enhanced churn prediction with advanced models"""
+    print("\n🔄 Running Enhanced Churn Prediction...")
+
+    # Create churn target if not exists
+    if 'churn' not in df.columns:
+        df['churn'] = (df['days_since_last_purchase'] > 90).astype(int)
+
+    # Prepare data
+    X_train, X_test, y_train, y_test, scaler = self.prepare_modeling_data(
+        df, 'churn', task='classification'
+    )
+
+    # Get classification models
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.linear_model import LogisticRegression
+    import lightgbm as lgb
+    import catboost as cb
+    import xgboost as xgb
+
+    models = {
+        'logistic_regression': LogisticRegression(random_state=42, max_iter=1000),
+        'random_forest': RandomForestClassifier(n_estimators=200, random_state=42),
+        'xgboost': xgb.XGBClassifier(n_estimators=200, random_state=42),
+        'lightgbm': lgb.LGBMClassifier(n_estimators=200, random_state=42, verbose=-1),
+        'catboost': cb.CatBoostClassifier(iterations=200, random_state=42, verbose=False)
+    }
+
+    # Train and evaluate models
+    results = {}
+    trained_models = {}
+
+    for name, model in models.items():
+        print(f"Training {name}...")
+        try:
+            model.fit(X_train, y_train)
+            trained_models[name] = model
+
+            metrics = self.evaluator.evaluate_classification_model(
+                model, X_test, y_test, name
+            )
+            results[name] = metrics
+
+        except Exception as e:
+            print(f"Error with {name}: {e}")
+            continue
+
+    # Save models
+    for name, model in trained_models.items():
+        joblib.dump(model, f'models/{name}_churn_prediction.pkl')
+
+    self.results_summary['Churn Prediction'] = results
+    return results, trained_models

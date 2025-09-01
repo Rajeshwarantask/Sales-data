@@ -69,15 +69,20 @@ class AdvancedFeatureEngineer:
             
         return df
     
-    def create_interaction_features(self, df, feature_pairs):
-        """Create interaction features between specified pairs"""
-        print("Creating interaction features...")
-        
-        for feat1, feat2 in feature_pairs:
-            if feat1 in df.columns and feat2 in df.columns:
-                df[f'{feat1}_{feat2}_interaction'] = df[feat1] * df[feat2]
-                df[f'{feat1}_{feat2}_ratio'] = df[feat1] / (df[feat2] + 1e-8)
-                
+    def create_interaction_features(self, df, interaction_pairs):
+        """Create interaction features such as ratios between specified feature pairs."""
+        for feat1, feat2 in interaction_pairs:
+            # Ensure both columns are numeric
+            df[feat1] = pd.to_numeric(df[feat1], errors='coerce')
+            df[feat2] = pd.to_numeric(df[feat2], errors='coerce')
+
+            # Replace NaN values with 0
+            df[feat1].fillna(0, inplace=True)
+            df[feat2].fillna(0, inplace=True)
+
+            # Create the ratio feature
+            df[f'{feat1}_{feat2}_ratio'] = df[feat1] / (df[feat2] + 1e-8)
+
         return df
     
     def create_customer_features(self, df):
@@ -173,6 +178,9 @@ class AdvancedFeatureEngineer:
             
         X_selected = selector.fit_transform(X, y)
         selected_features = X.columns[selector.get_support()]
+        
+        print(X.dtypes)
+        print(X.isnull().sum())
         
         return X_selected, selected_features, selector
     

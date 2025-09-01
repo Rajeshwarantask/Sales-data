@@ -267,3 +267,37 @@ class AdvancedEvaluator:
         upper_bound = mean_pred + z_score * std_pred
         
         return mean_pred, lower_bound, upper_bound
+
+from sklearn.metrics import mean_squared_error, r2_score
+import pandas as pd
+
+def evaluate_models(models, X_test, y_test):
+    """
+    Evaluate multiple models on the test dataset.
+
+    Args:
+        models (dict): A dictionary of trained models with model names as keys.
+        X_test (pd.DataFrame): Test features.
+        y_test (pd.Series): Test target values.
+
+    Returns:
+        pd.DataFrame: A DataFrame containing evaluation metrics for each model.
+    """
+    results = []
+    for model_name, model in models.items():
+        # Predict on the test set
+        y_pred = model.predict(X_test)
+
+        # Calculate evaluation metrics
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+
+        # Append results
+        results.append({
+            "Model": model_name,
+            "MSE": mse,
+            "R²": r2
+        })
+
+    # Convert results to a DataFrame
+    return pd.DataFrame(results)
