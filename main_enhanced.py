@@ -79,18 +79,21 @@ def main():
             print("-" * 40)
             
             # Group by task and show best model
-            for task in final_report['Task'].unique():
-                task_results = final_report[final_report['Task'] == task]
-                
-                if 'R²' in task_results.columns:
-                    best_model = task_results.loc[task_results['R²'].idxmax()]
-                    print(f"{task}: {best_model['Model']} (R² = {best_model['R²']:.4f})")
-                elif 'F1' in task_results.columns:
-                    best_model = task_results.loc[task_results['F1'].idxmax()]
-                    print(f"{task}: {best_model['Model']} (F1 = {best_model['F1']:.4f})")
-                elif 'Silhouette Score' in task_results.columns:
-                    best_model = task_results.loc[task_results['Silhouette Score'].idxmax()]
-                    print(f"{task}: {best_model['Model']} (Silhouette = {best_model['Silhouette Score']:.4f})")
+            if 'Task' in final_report.columns:
+                for task in final_report['Task'].unique():
+                    task_results = final_report[final_report['Task'] == task]
+                    
+                    if 'R²' in task_results.columns:
+                        best_model = task_results.loc[task_results['R²'].idxmax()]
+                        print(f"{task}: {best_model['Model']} (R² = {best_model['R²']:.4f})")
+                    elif 'F1' in task_results.columns:
+                        best_model = task_results.loc[task_results['F1'].idxmax()]
+                        print(f"{task}: {best_model['Model']} (F1 = {best_model['F1']:.4f})")
+                    elif 'Silhouette Score' in task_results.columns:
+                        best_model = task_results.loc[task_results['Silhouette Score'].idxmax()]
+                        print(f"{task}: {best_model['Model']} (Silhouette = {best_model['Silhouette Score']:.4f})")
+            else:
+                print("No 'Task' column found in final_report, skipping task loop.")
         
     except Exception as e:
         print(f"❌ Error in main execution: {e}")
